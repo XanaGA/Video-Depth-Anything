@@ -13,6 +13,7 @@ cd "$ROOT"
 export PYTHONUNBUFFERED=1
 
 DATA_ROOT="${1:-data}"
+MAX_DIRS="${2:-0}"  # Optional second argument; 0 means no limit
 
 if [[ ! -d "$DATA_ROOT" ]]; then
   echo "error: not a directory: $DATA_ROOT" >&2
@@ -20,11 +21,17 @@ if [[ ! -d "$DATA_ROOT" ]]; then
 fi
 
 failed=0
+count=0
 shopt -s nullglob
 for dir in "$DATA_ROOT"/*/; do
   [[ -d "$dir" ]] || continue
   name="${dir%/}"
   name="${name##*/}"
+
+  # Stop if we've reached the maximum number of directories
+  if (( MAX_DIRS > 0 && count >= MAX_DIRS )); then
+    break
+  fi
 
   in="${DATA_ROOT}/${name}/images"
   out="${DATA_ROOT}/${name}/depth_vda2"
@@ -46,6 +53,7 @@ for dir in "$DATA_ROOT"/*/; do
     echo "failed: ${name}" >&2
     failed=$((failed + 1))
   fi
+  count=$((count + 1))
 done
 
 if (( failed > 0 )); then
