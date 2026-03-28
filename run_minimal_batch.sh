@@ -3,8 +3,9 @@
 # .vscode/launch.json "Single Video:Depth Anything V2" (vits, frame_seq, metric, save_npz_separate).
 #
 # Usage:
-#   ./run_minimal_batch.sh [DATA_ROOT]
+#   ./run_minimal_batch.sh [DATA_ROOT] [MAX_DIRS]
 # Default DATA_ROOT is "data" (relative to this repo).
+# Encoder: set ENCODER=vits|vitb|vitl (default: vits).
 
 set -euo pipefail
 
@@ -14,6 +15,13 @@ export PYTHONUNBUFFERED=1
 
 DATA_ROOT="${1:-data}"
 MAX_DIRS="${2:-0}"  # Optional second argument; 0 means no limit
+ENCODER="${ENCODER:-vits}"
+
+case "$ENCODER" in vits|vitb|vitl) ;; *)
+  echo "error: ENCODER must be vits, vitb, or vitl (got: ${ENCODER})" >&2
+  exit 1
+  ;;
+esac
 
 if [[ ! -d "$DATA_ROOT" ]]; then
   echo "error: not a directory: $DATA_ROOT" >&2
@@ -41,14 +49,15 @@ for dir in "$DATA_ROOT"/*/; do
     continue
   fi
 
-  echo "=== ${name} ==="
+  echo "=== ${name} (encoder=${ENCODER}) ==="
   if ! python -m run_minimal \
     --input_video "$in" \
     --output_dir "$out" \
-    --encoder vits \
+    --encoder "$ENCODER" \
     --frame_seq \
     --metric \
-    --save_npz_separate
+    --save_npz_separate \
+    --fp32
   then
     echo "failed: ${name}" >&2
     failed=$((failed + 1))
