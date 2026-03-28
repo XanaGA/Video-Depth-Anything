@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import argparse
+import cv2
 import numpy as np
 import os
 import torch
@@ -21,7 +22,10 @@ from utils.dc_utils import read_video_frames, save_video
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Video Depth Anything')
-    parser.add_argument('--input_video', type=str, default='./assets/example_videos/davis_rollercoaster.mp4')
+    parser.add_argument('--input_video', type=str, default='./assets/example_videos/davis_rollercoaster.mp4',
+                        help='Video file path, or with --frame_seq a folder of image frames (sorted; assumed 30 fps).')
+    parser.add_argument('--frame_seq', action='store_true',
+                        help='Treat input_video as a directory of frames (.png/.jpg/...) instead of a video file.')
     parser.add_argument('--output_dir', type=str, default='./outputs')
     parser.add_argument('--input_size', type=int, default=518)
     parser.add_argument('--max_res', type=int, default=1280)
@@ -31,12 +35,16 @@ if __name__ == '__main__':
     parser.add_argument('--metric', action='store_true', help='use metric model')
     parser.add_argument('--fp32', action='store_true', help='model infer with torch.float32, default is torch.float16')
     parser.add_argument('--grayscale', action='store_true', help='do not apply colorful palette')
-    parser.add_argument('--save_npz', action='store_true', help='save depths as npz')
+    parser.add_argument('--save_video', action='store_true',
+                        help='write source and depth visualization mp4s to output_dir (off by default)')
+    parser.add_argument('--save_npz', action='store_true', help='save depths as a single compressed npz')
+    parser.add_argument('--save_npz_separate', action='store_true',
+                        help='save one compressed npz per frame instead of a single file')
     parser.add_argument('--save_exr', action='store_true', help='save depths as exr')
-    parser.add_argument('--focal-length-x', default=470.4, type=float,
-                        help='Focal length along the x-axis.')
-    parser.add_argument('--focal-length-y', default=470.4, type=float,
-                        help='Focal length along the y-axis.')
+    # parser.add_argument('--focal-length-x', default=470.4, type=float,
+    #                     help='Focal length along the x-axis.')
+    # parser.add_argument('--focal-length-y', default=470.4, type=float,
+    #                     help='Focal length along the y-axis.')
 
     args = parser.parse_args()
 
@@ -53,7 +61,9 @@ if __name__ == '__main__':
     video_depth_anything.load_state_dict(torch.load(f'./checkpoints/{checkpoint_name}_{args.encoder}.pth', map_location='cpu'), strict=True)
     video_depth_anything = video_depth_anything.to(DEVICE).eval()
 
-    frames, target_fps, _ = read_video_frames(args.input_video, args.max_len, args.target_fps, args.max_res)
+    frames, target_fps, frame_orig_hw = read_video_frames(
+        args.input_video, args.max_len, args.target_fps, args.max_res, frame_seq=args.frame_seq
+    )
     depths, fps = video_depth_anything.infer_video_depth(frames, target_fps, input_size=args.input_size, device=DEVICE, fp32=args.fp32)
 
     video_name = os.path.basename(args.input_video)
@@ -61,12 +71,27 @@ if __name__ == '__main__':
 
     processed_video_path = os.path.join(args.output_dir, os.path.splitext(video_name)[0]+'_src.mp4')
     depth_vis_path = os.path.join(args.output_dir, os.path.splitext(video_name)[0]+'_vis.mp4')
-    save_video(frames, processed_video_path, fps=fps)
-    save_video(depths, depth_vis_path, fps=fps, is_depths=True, grayscale=args.grayscale)
+    if args.save_video:
+        save_video(frames, processed_video_path, fps=fps)
+        save_video(depths, depth_vis_path, fps=fps, is_depths=True, grayscale=args.grayscale)
 
     if args.save_npz:
         depth_npz_path = os.path.join(args.output_dir, os.path.splitext(video_name)[0]+'_depths.npz')
         np.savez_compressed(depth_npz_path, depths=depths)
+    if args.save_npz_separate:
+        depth_npz_dir = os.path.join(args.output_dir, os.path.splitext(video_name)[0] + '_depths_npz')
+        os.makedirs(depth_npz_dir, exist_ok=True)
+        for i, depth in enumerate(depths):
+            if frame_orig_hw is not None:
+                oh, ow = int(frame_orig_hw[i, 0]), int(frame_orig_hw[i, 1])
+                if depth.shape[0] != oh or depth.shape[1] != ow:
+                    depth = cv2.resize(
+                        depth.astype(np.float32),
+                        (ow, oh),
+                        interpolation=cv2.INTER_LINEAR,
+                    )
+            frame_npz = os.path.join(depth_npz_dir, f'frame_{i:05d}.npz')
+            np.savez_compressed(frame_npz, depth=depth)
     if args.save_exr:
         depth_exr_dir = os.path.join(args.output_dir, os.path.splitext(video_name)[0]+'_depths_exr')
         os.makedirs(depth_exr_dir, exist_ok=True)
@@ -82,20 +107,20 @@ if __name__ == '__main__':
             exr_file.writePixels({"Z": depth.tobytes()})
             exr_file.close()
 
-    if args.metric:
-        import open3d as o3d
+    # if args.metric:
+    #     import open3d as o3d
 
-        width, height = depths[0].shape[-1], depths[0].shape[-2]
-        x, y = np.meshgrid(np.arange(width), np.arange(height))
-        x = (x - width / 2) / args.focal_length_x
-        y = (y - height / 2) / args.focal_length_y
+    #     width, height = depths[0].shape[-1], depths[0].shape[-2]
+    #     x, y = np.meshgrid(np.arange(width), np.arange(height))
+    #     x = (x - width / 2) / args.focal_length_x
+    #     y = (y - height / 2) / args.focal_length_y
 
-        for i, (color_image, depth) in enumerate(zip(frames, depths)):
-            z = np.array(depth)
-            points = np.stack((np.multiply(x, z), np.multiply(y, z), z), axis=-1).reshape(-1, 3)
-            colors = np.array(color_image).reshape(-1, 3) / 255.0
+    #     for i, (color_image, depth) in enumerate(zip(frames, depths)):
+    #         z = np.array(depth)
+    #         points = np.stack((np.multiply(x, z), np.multiply(y, z), z), axis=-1).reshape(-1, 3)
+    #         colors = np.array(color_image).reshape(-1, 3) / 255.0
 
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(points)
-            pcd.colors = o3d.utility.Vector3dVector(colors)
-            o3d.io.write_point_cloud(os.path.join(args.output_dir, 'point' + str(i).zfill(4) + '.ply'), pcd)
+    #         pcd = o3d.geometry.PointCloud()
+    #         pcd.points = o3d.utility.Vector3dVector(points)
+    #         pcd.colors = o3d.utility.Vector3dVector(colors)
+    #         o3d.io.write_point_cloud(os.path.join(args.output_dir, 'point' + str(i).zfill(4) + '.ply'), pcd)

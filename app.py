@@ -44,7 +44,7 @@ def infer_video_depth(
     output_dir: str = './outputs',
     input_size: int = 518,
 ):
-    frames, target_fps = read_video_frames(input_video, max_len, target_fps, max_res)
+    frames, target_fps, _ = read_video_frames(input_video, max_len, target_fps, max_res)
     depths, fps = video_depth_anything.infer_video_depth(frames, target_fps, input_size=input_size, device='cuda')
 
     video_name = os.path.basename(input_video)
