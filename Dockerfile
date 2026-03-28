@@ -20,10 +20,12 @@ RUN apt-get update && apt-get install -y wget gnupg tzdata && \
         libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
+ENV LD_LIBRARY_PATH=/usr/local/cuda-12.1/compat:$LD_LIBRARY_PATH
+
 RUN pip install --upgrade pip
 
 # Mirrors requirements.txt (torch/torchvision come from the base image tag, matching 2.1.1 / 0.16.1).
-RUN pip install --no-cache-dir \
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu121\
     numpy==1.24.0 \
     opencv-python \
     matplotlib \
