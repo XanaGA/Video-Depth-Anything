@@ -3,15 +3,30 @@
 # .vscode/launch.json "Single Video:Depth Anything V2" (vits, frame_seq, metric, save_npz_separate).
 #
 # Usage:
-#   ./run_minimal_batch.sh [DATA_ROOT] [MAX_DIRS]
+#   ./run_minimal_batch.sh [--overwrite] [DATA_ROOT] [MAX_DIRS]
+#   ./run_minimal_batch.sh data --overwrite   # flag can appear anywhere
 # Default DATA_ROOT is "data" (relative to this repo).
 # Encoder: set ENCODER=vits|vitb|vitl (default: vits).
+#
+# Without --overwrite, skips a run when the per-frame NPZ output directory already exists
+# (same path as run_minimal.py: output_dir/$(basename input_video without ext)_depths_npz).
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 export PYTHONUNBUFFERED=1
+
+OVERWRITE=0
+args=()
+for arg in "$@"; do
+  if [[ "$arg" == "--overwrite" ]]; then
+    OVERWRITE=1
+  else
+    args+=("$arg")
+  fi
+done
+set -- "${args[@]}"
 
 DATA_ROOT="${1:-data}"
 MAX_DIRS="${2:-0}"  # Optional second argument; 0 means no limit
@@ -46,6 +61,14 @@ for dir in "$DATA_ROOT"/*/; do
 
   if [[ ! -d "$in" ]]; then
     echo "skip ${name}: missing ${in}" >&2
+    continue
+  fi
+
+  # Match run_minimal.py: depth_npz_dir = output_dir / (splitext(basename(input_video))[0] + '_depths_npz')
+  in_base="${in##*/}"
+  depth_npz_dir="${out}/${in_base}_depths_npz"
+  if (( OVERWRITE == 0 )) && [[ -d "$depth_npz_dir" ]]; then
+    echo "skip ${name}: already exists ${depth_npz_dir} (use --overwrite to re-run)" >&2
     continue
   fi
 
